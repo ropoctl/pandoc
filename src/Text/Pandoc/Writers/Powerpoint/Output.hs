@@ -160,6 +160,7 @@ data SlideLayoutsOf a = SlideLayouts
   , title :: a
   , content :: a
   , twoColumn :: a
+  , overUnder :: a
   , comparison :: a
   , contentWithCaption :: a
   , blank :: a
@@ -589,6 +590,7 @@ presentationToArchive opts meta pres = do
                                   , title = "Section Header"
                                   , content = "Title and Content"
                                   , twoColumn = "Two Content"
+                                  , overUnder = "Over and Under Content"
                                   , comparison = "Comparison"
                                   , contentWithCaption = "Content with Caption"
                                   , blank = "Blank"
@@ -728,6 +730,7 @@ getLayout layout = getElement <$> getSlideLayouts
         TitleSlide{}              -> title
         ContentSlide{}            -> content
         TwoColumnSlide{}          -> twoColumn
+        OverUnderSlide{}          -> overUnder
         ComparisonSlide{}         -> comparison
         ContentWithCaptionSlide{} -> contentWithCaption
         BlankSlide{}              -> blank
@@ -1807,6 +1810,23 @@ slideToElement (Slide _ l@(TwoColumnSlide hdrElems shapesL shapesR) _ background
       ("xmlns:r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships"),
       ("xmlns:p", "http://schemas.openxmlformats.org/presentationml/2006/main")
     ] (mknode "p:cSld" [] (toList backgroundImageElement <> [spTree]) : animations)
+slideToElement (Slide _ l@(OverUnderSlide hdrElems shapes1 shapes2) _ backgroundImage) = do
+  layout <- getLayout l
+  backgroundImageElement <- traverse backgroundImageToElement backgroundImage
+  (shapeIds, spTree) <- local (\env -> if null hdrElems
+                           then env
+                           else env{envSlideHasHeader=True}) $
+            twoColumnToElement layout hdrElems shapes1 shapes2
+  let animations = case shapeIds of
+        Nothing -> []
+        Just TwoColumnShapeIds{..} ->
+          slideToIncrementalAnimations (zip twoColumnLeftIds shapes1
+                                        <> zip twoColumnRightIds shapes2)
+  return $ mknode "p:sld"
+    [ ("xmlns:a", "http://schemas.openxmlformats.org/drawingml/2006/main"),
+      ("xmlns:r", "http://schemas.openxmlformats.org/officeDocument/2006/relationships"),
+      ("xmlns:p", "http://schemas.openxmlformats.org/presentationml/2006/main")
+    ] (mknode "p:cSld" [] (toList backgroundImageElement <> [spTree]) : animations)
 slideToElement (Slide _ l@(ComparisonSlide hdrElems shapesL shapesR) _ backgroundImage) = do
   layout <- getLayout l
   backgroundImageElement <- traverse backgroundImageToElement backgroundImage
@@ -2393,6 +2413,7 @@ slideToSlideRelElement slide = do
         (Slide _ TitleSlide{} _ _)              -> title
         (Slide _ ContentSlide{} _ _)            -> content
         (Slide _ TwoColumnSlide{} _ _)          -> twoColumn
+        (Slide _ OverUnderSlide{} _ _)          -> overUnder
         (Slide _ ComparisonSlide{} _ _)         -> comparison
         (Slide _ ContentWithCaptionSlide{} _ _) -> contentWithCaption
         (Slide _ BlankSlide _ _)                -> blank

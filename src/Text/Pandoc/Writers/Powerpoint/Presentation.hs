@@ -220,6 +220,8 @@ data Layout = MetadataSlide [ParaElem] [ParaElem] [[ParaElem]] [ParaElem]
             --             heading    content
             | TwoColumnSlide [ParaElem] [Shape] [Shape]
             --               heading    left    right
+            | OverUnderSlide [ParaElem] [Shape] [Shape]
+            --               heading    over    under
             | ComparisonSlide [ParaElem] ([Shape], [Shape]) ([Shape], [Shape])
             --                heading  left@(text, content) right@(text, content)
             | ContentWithCaptionSlide [ParaElem] [Shape] [Shape]
@@ -704,13 +706,14 @@ splitBlocks' cur acc (tbl@Table{} : blks) = do
           then acc ++ ([cur | not (null cur)]) ++ [tbl : nts]
           else acc ++ ([cur ++ [tbl] ++ nts]))
          blks'
-splitBlocks' cur acc (d@(Div (_, classes, _) _): blks) | "columns" `elem` classes =  do
-  slideLevel <- asks envSlideLevel
-  let (nts, blks') = span isNotesDiv blks
-  case cur of
-    [Header n _ _] | n == slideLevel || slideLevel == 0 ->
-                            splitBlocks' [] (acc ++ [cur ++ [d] ++ nts]) blks'
-    _ ->  splitBlocks' [] (acc ++ ([cur | not (null cur)]) ++ [d : nts]) blks'
+splitBlocks' cur acc (d@(Div (_, classes, _) _): blks)
+  | "columns" `elem` classes || "overunder" `elem` classes =  do
+    slideLevel <- asks envSlideLevel
+    let (nts, blks') = span isNotesDiv blks
+    case cur of
+      [Header n _ _] | n == slideLevel || slideLevel == 0 ->
+                              splitBlocks' [] (acc ++ [cur ++ [d] ++ nts]) blks'
+      _ ->  splitBlocks' [] (acc ++ ([cur | not (null cur)]) ++ [d : nts]) blks'
 splitBlocks' cur acc (blk : blks) = splitBlocks' (cur ++ [blk]) acc blks
 
 splitBlocks :: [Block] -> Pres [[Block]]
@@ -752,6 +755,21 @@ bodyBlocksToSlide _ (blk : blks) spkNotes
       if (any null [blksL1, blksL2]) && (any null [blksR1, blksR2])
       then mkTwoColumn blksL blksR
       else mkComparison blksL1 blksL2 blksR1 blksR2
+bodyBlocksToSlide _ (blk : blks) spkNotes
+  | Div (_, classes, _) divBlks <- blk
+  , "overunder" `elem` classes
+  , Div _ blks0 : Div _ blks1 : remaining <- divBlks = do
+      mapM_ (addLogMessage . BlockNotRendered) (blks ++ remaining)
+      blks0' <- join . take 1 <$> splitBlocks blks0
+      blks1' <- join . take 1 <$> splitBlocks blks1
+      shapesL <- blocksToShapes blks0'
+      shapesR <- blocksToShapes blks1'
+      sldId <- asks envCurSlideId
+      return $ Slide
+        sldId
+        (OverUnderSlide [] shapesL shapesR)
+        spkNotes
+        Nothing
 bodyBlocksToSlide _ (blk : blks) spkNotes = do
       sldId <- asks envCurSlideId
       inNoteSlide <- asks envInNoteSlide
@@ -797,6 +815,7 @@ blocksToSlide' lvl (Header n (ident, _, attributes) ils : blks) spkNotes
       let layout = case slideLayout slide of
             ContentSlide _ cont          -> ContentSlide hdr cont
             TwoColumnSlide _ contL contR -> TwoColumnSlide hdr contL contR
+            OverUnderSlide _ cont1 cont2 -> OverUnderSlide hdr cont1 cont2
             ComparisonSlide _ contL contR -> ComparisonSlide hdr contL contR
             ContentWithCaptionSlide _ text content -> ContentWithCaptionSlide hdr text content
             BlankSlide -> if all inlineIsBlank ils then BlankSlide else ContentSlide hdr []
@@ -949,6 +968,11 @@ applyToLayout f (TwoColumnSlide hdr contentL contentR) = do
   contentL' <- mapM (applyToShape f) contentL
   contentR' <- mapM (applyToShape f) contentR
   return $ TwoColumnSlide hdr' contentL' contentR'
+applyToLayout f (OverUnderSlide hdr content0 content2) = do
+  hdr' <- mapM f hdr
+  content1' <- mapM (applyToShape f) content0
+  content2' <- mapM (applyToShape f) content2
+  return $ OverUnderSlide hdr' content1' content2'
 applyToLayout f (ComparisonSlide hdr (contentL1, contentL2) (contentR1, contentR2)) = do
   hdr' <- mapM f hdr
   contentL1' <- mapM (applyToShape f) contentL1
@@ -1010,6 +1034,10 @@ emptyLayout layout = case layout of
     all emptyParaElem hdr &&
     all emptyShape shapes
   TwoColumnSlide hdr shapes1 shapes2 ->
+    all emptyParaElem hdr &&
+    all emptyShape shapes1 &&
+    all emptyShape shapes2
+  OverUnderSlide hdr shapes1 shapes2 ->
     all emptyParaElem hdr &&
     all emptyShape shapes1 &&
     all emptyShape shapes2
